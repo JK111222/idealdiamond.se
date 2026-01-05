@@ -1,0 +1,1485 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ideal Diamond Selector - Educational Tool</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Fonts: Merriweather (Serif) for headings, Inter (Sans) for UI -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300&display=swap"
+        rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        serif: ['Merriweather', 'serif'],
+                    },
+                    colors: {
+                        paper: '#F9F7F2', // Warm off-white
+                        ink: '#1F2937', // Deep charcoal
+                        gold: {
+                            100: '#FBF5E6',
+                            200: '#F3E6C5',
+                            500: '#C5A059', // Muted gold
+                            600: '#A3803D',
+                            700: '#856429',
+                        },
+                        status: {
+                            ideal: '#10B981', // Emerald
+                            good: '#3B82F6', // Blue
+                            warning: '#F59E0B', // Amber
+                            danger: '#EF4444', // Red
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #F9F7F2;
+            color: #1F2937;
+        }
+
+        .card {
+            background-color: white;
+            border: 1px solid #E5E7EB;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- CONSTANTS & DEFINITIONS ---
+
+        // Benchmarks for reference (used in logic)
+        const benchmarks = {
+            gia: {
+                table: { min: 52, max: 62 },
+                depth: { min: 58, max: 63 },
+                crownAngle: { min: 31.5, max: 36.5 },
+                pavilionAngle: { min: 40.2, max: 41.8 },
+                starLength: { min: 45, max: 60 },
+                lowerHalf: { min: 75, max: 85 },
+                cut: ['Excellent'],
+                polish: ['Excellent', 'Very Good'],
+                symmetry: ['Excellent', 'Very Good']
+            },
+            agsl: {
+                table: { min: 52, max: 57 },
+                depth: { min: 59, max: 62 },
+                crownAngle: { min: 33, max: 35.5 },
+                pavilionAngle: { min: 40.5, max: 41.1 },
+                starLength: { min: 40, max: 55 },
+                lowerHalf: { min: 75, max: 80 },
+                cut: ['Excellent'], // AGS Ideal is 0, equiv to Excellent
+                polish: ['Excellent'],
+                symmetry: ['Excellent']
+            },
+            strict: {
+                table: { min: 54, max: 57 },
+                depth: { min: 61, max: 62 },
+                crownAngle: { min: 34.0, max: 35.0 },
+                pavilionAngle: { min: 40.6, max: 41.0 },
+                starLength: { min: 50, max: 55 },
+                lowerHalf: { min: 75, max: 80 },
+                cut: ['Excellent'],
+                polish: ['Excellent'],
+                symmetry: ['Excellent'],
+                fluorescence: ['None', 'Faint']
+            }
+        };
+
+        // --- HELPER FUNCTIONS ---
+
+        const checkRange = (value, min, max) => {
+            if (value === null || value === '' || isNaN(value)) return null;
+            const num = parseFloat(value);
+            return num >= min && num <= max;
+        };
+
+        // Determine the status of a diamond based on "Dealbreakers" logic
+        const evaluateDiamond = (d) => {
+            const issues = [];
+            const warnings = [];
+            const goodPoints = [];
+
+            // Benchmark Checks
+            const checkBenchmark = (d, standard) => {
+                const b = benchmarks[standard];
+                if (!b) return false;
+
+                // Helper to safely check a property
+                const checkProp = (prop) => {
+                    if (!b[prop]) return true; // If benchmark doesn't define it, it passes (or is N/A)
+
+                    const val = d[prop];
+
+                    // Handle qualitative (array of allowed strings)
+                    if (Array.isArray(b[prop])) {
+                        return b[prop].some(allowed => (val || '').toLowerCase() === allowed.toLowerCase());
+                    }
+
+                    // Handle quantitative (min/max)
+                    const num = parseFloat(val);
+                    if (isNaN(num)) return false; // Missing data fails strict check
+                    return num >= b[prop].min && num <= b[prop].max;
+                };
+
+                return checkProp('table') &&
+                    checkProp('depth') &&
+                    checkProp('crownAngle') &&
+                    checkProp('pavilionAngle') &&
+                    checkProp('starLength') &&
+                    checkProp('lowerHalf') &&
+                    checkProp('cut') &&
+                    checkProp('polish') &&
+                    checkProp('symmetry') &&
+                    checkProp('fluorescence');
+            };
+
+            const passesGIA = checkBenchmark(d, 'gia');
+            const passesAGS = checkBenchmark(d, 'agsl');
+            const passesStrict = checkBenchmark(d, 'strict');
+
+            // 1. DEALBREAKERS (Automatic "Not Recommended")
+            const cut = (d.cut || '').toLowerCase();
+            const polish = (d.polish || '').toLowerCase();
+            const symmetry = (d.symmetry || '').toLowerCase();
+            const fluor = (d.fluorescence || '').toLowerCase();
+
+            if (['fair', 'poor'].includes(cut)) issues.push("Cut grade is Fair or Poor, typically associated with reduced light performance");
+            if (['fair', 'poor'].includes(polish)) issues.push("Polish is too low");
+            if (['fair', 'poor'].includes(symmetry)) issues.push("Symmetry is too low");
+
+            // Fluorescence dealbreakers for high colors
+            const highColor = ['d', 'e', 'f'].includes((d.color || '').toLowerCase());
+            if (highColor && (fluor.includes('strong') || fluor.includes('very strong'))) {
+                issues.push("Strong fluorescence in Colorless (D-F) diamonds may cause haziness and requires visual inspection");
+            }
+            if (fluor.includes('very strong')) issues.push("Very Strong fluorescence (Requires visual inspection for haze)");
+
+            // Girdle dealbreakers/warnings
+            const girdle = (d.girdle || '').toLowerCase();
+            const girdleParts = girdle.split(/\s+to\s+/).map(p => p.trim());
+
+            girdleParts.forEach(p => {
+                if (p.includes('extremely thin')) {
+                    if (!issues.includes("Girdle is Extremely Thin (high chipping risk)")) issues.push("Girdle is Extremely Thin (high chipping risk)");
+                } else if (p.includes('very thin')) {
+                    if (!warnings.includes("Girdle is Very Thin (chipping risk)")) warnings.push("Girdle is Very Thin (chipping risk)");
+                }
+
+                if (p.includes('extremely thick')) {
+                    if (!issues.includes("Girdle is Extremely Thick (hides significant weight)")) issues.push("Girdle is Extremely Thick (hides significant weight)");
+                } else if (p.includes('very thick')) {
+                    if (!warnings.includes("Girdle is Very Thick (hides weight)")) warnings.push("Girdle is Very Thick (hides weight)");
+                } else if (p === 'thick') {
+                    // "Thick" is also non-ideal, let's add a warning for it if not already handled
+                    if (!warnings.includes("Girdle is Thick (may hide weight)")) warnings.push("Girdle is Thick (may hide weight)");
+                }
+            });
+            // Final safety check for the combined string
+            if (girdle.includes('very thick') && !warnings.some(w => w.includes('Very Thick'))) {
+                warnings.push("Girdle is Very Thick (hides weight)");
+            }
+            if (girdle.includes('very thin') && !warnings.some(w => w.includes('Very Thin'))) {
+                warnings.push("Girdle is Very Thin (chipping risk)");
+            }
+
+            // Culet dealbreakers
+            const culet = (d.culet || '').toLowerCase();
+            if (['large', 'very large'].includes(culet)) issues.push("Culet is too large (visible)");
+
+            // 2. QUALITY WARNINGS (Non-Excellent)
+            if (['very good', 'good'].includes(cut)) warnings.push("Cut is not Excellent");
+            if (['very good', 'good'].includes(polish)) warnings.push("Polish is not Excellent");
+            if (['very good', 'good'].includes(symmetry)) warnings.push("Symmetry is not Excellent");
+            if (['faint', 'medium', 'strong', 'very strong'].includes(fluor) && fluor !== 'none') warnings.push("Fluorescence is not None");
+            if (['pointed', 'very small', 'small', 'medium'].includes(culet) && culet !== 'none') warnings.push("Culet is not None");
+
+            // 2. PROPORTION CHECKS
+            // Table
+            const table = parseFloat(d.table);
+            if (table) {
+                if (checkRange(table, benchmarks.strict.table.min, benchmarks.strict.table.max)) goodPoints.push("Ideal Table");
+                else if (checkRange(table, benchmarks.gia.table.min, benchmarks.gia.table.max)) warnings.push("Table outside super-ideal range");
+                else issues.push("Table out of acceptable range");
+            }
+
+            // Depth
+            const depth = parseFloat(d.depth);
+            if (depth) {
+                if (checkRange(depth, benchmarks.strict.depth.min, benchmarks.strict.depth.max)) goodPoints.push("Ideal Depth");
+                else if (checkRange(depth, benchmarks.gia.depth.min, benchmarks.gia.depth.max)) warnings.push("Depth outside super-ideal range");
+                else issues.push("Depth out of acceptable range");
+            }
+
+            // Crown Angle
+            const crown = parseFloat(d.crownAngle);
+            if (crown) {
+                if (checkRange(crown, benchmarks.strict.crownAngle.min, benchmarks.strict.crownAngle.max)) goodPoints.push("Ideal Crown Angle");
+                else if (checkRange(crown, benchmarks.gia.crownAngle.min, benchmarks.gia.crownAngle.max)) warnings.push("Crown Angle outside super-ideal range");
+                else issues.push("Crown Angle out of acceptable range");
+            }
+
+            // Pavilion Angle
+            const pavilion = parseFloat(d.pavilionAngle);
+            if (pavilion) {
+                if (checkRange(pavilion, benchmarks.strict.pavilionAngle.min, benchmarks.strict.pavilionAngle.max)) goodPoints.push("Ideal Pavilion Angle");
+                else if (checkRange(pavilion, benchmarks.gia.pavilionAngle.min, benchmarks.gia.pavilionAngle.max)) warnings.push("Pavilion Angle outside super-ideal range");
+                else issues.push("Pavilion Angle out of acceptable range");
+            }
+
+            // 3. DETERMINE STATUS
+            let status = "Unknown";
+            let color = "gray";
+            let title = "Insufficient Data";
+
+            if (issues.length > 0) {
+                status = "Not Recommended";
+                color = "danger";
+                title = "Less Recommended";
+            } else if (warnings.length > 0) {
+                status = "Good Candidate";
+                color = "good"; // Blue
+                title = "Worth Investigating";
+                // If only minor warnings, maybe "Strong Candidate"
+            } else if (goodPoints.length >= 4) { // Assuming core 4 props are ideal
+                status = "Ideal Candidate";
+                color = "ideal"; // Green
+                title = "Top Tier";
+            } else {
+                status = "Good Candidate";
+                color = "good";
+                title = "Solid Choice";
+            }
+
+            return { status, color, title, issues, warnings, goodPoints, passesGIA, passesAGS, passesStrict };
+        };
+        // --- COMPONENTS ---
+
+        const MultiRangeGauge = ({ label, value, strict, ags, gia, unit = '', alignGIARight = false }) => {
+            if (value === null || value === '' || isNaN(value)) return null;
+
+            const valNum = parseFloat(value);
+
+            // Determine the full visual range based on all benchmarks
+            const allBounds = [
+                gia?.min, gia?.max,
+                ags?.min, ags?.max,
+                strict?.min, strict?.max
+            ].filter(v => v != null);
+
+            const minLimit = Math.min(...allBounds);
+            const maxLimit = Math.max(...allBounds);
+
+            const range = maxLimit - minLimit;
+            const buffer = range * 0.15; // 15% buffer
+            const gaugeMin = minLimit - buffer;
+            const gaugeMax = maxLimit + buffer;
+            const totalRange = gaugeMax - gaugeMin;
+
+            const getPct = (v) => ((v - gaugeMin) / totalRange) * 100;
+            const getWidth = (min, max) => getPct(max) - getPct(min);
+
+            // Clamp marker
+            const markerPos = Math.min(Math.max(getPct(valNum), 0), 100);
+
+            // Determine Status
+            let statusText = 'Less Recommended';
+            let statusColor = 'text-red-600';
+            let statusBorder = 'border-red-200 bg-red-50';
+
+            if (valNum >= strict.min && valNum <= strict.max) {
+                statusText = 'Super Ideal';
+                statusColor = 'text-emerald-600';
+                statusBorder = 'border-emerald-200 bg-emerald-50';
+            } else if (ags && valNum >= ags.min && valNum <= ags.max) {
+                statusText = 'AGS Ideal';
+                statusColor = 'text-blue-600';
+                statusBorder = 'border-blue-200 bg-blue-50';
+            } else if (gia && valNum >= gia.min && valNum <= gia.max) {
+                statusText = 'GIA Excellent';
+                statusColor = 'text-gray-600';
+                statusBorder = 'border-gray-200 bg-gray-50';
+            }
+
+            return (
+                <div className="flex items-center gap-2 h-8 mb-1">
+                    {/* Label (Left) */}
+                    <div className="w-12 text-right text-[10px] font-medium text-gray-500 leading-tight">
+                        {label}
+                    </div>
+
+                    {/* Gauge Pill (Middle) */}
+                    <div className="flex-1 flex flex-col justify-center">
+                        <div className="relative h-3 bg-white/50 rounded-full overflow-visible border border-white/60 shadow-inner backdrop-blur-sm">
+                            {/* GIA Range */}
+                            {gia && (
+                                <div
+                                    className={`absolute top-0 bottom-0 bg-gradient-to-b from-gray-300 to-gray-400 flex items-center ${alignGIARight ? 'justify-end pr-1' : 'justify-start pl-1'} rounded-full shadow-sm`}
+                                    style={{ left: `${getPct(gia.min)}%`, width: `${getWidth(gia.min, gia.max)}%` }}
+                                    title={`GIA: ${gia.min}-${gia.max}${unit}`}
+                                >
+                                    <span className="text-[5px] font-bold text-white tracking-tight drop-shadow-sm mr-0.5">GIA</span>
+                                </div>
+                            )}
+                            {ags && (
+                                <div
+                                    className="absolute top-1/2 -translate-y-1/2 h-2.5 bg-gradient-to-b from-blue-400 to-blue-500 flex items-center justify-start pl-1 rounded-full shadow-md z-10"
+                                    style={{ left: `${getPct(ags.min)}%`, width: `${getWidth(ags.min, ags.max)}%` }}
+                                    title={`AGS: ${ags.min}-${ags.max}${unit}`}
+                                >
+                                    <span className="text-[5px] font-bold text-white tracking-tight drop-shadow-sm mr-0.5">AGS</span>
+                                </div>
+                            )}
+                            {/* Strict Range */}
+                            <div
+                                className="absolute top-1/2 -translate-y-1/2 h-2 bg-gradient-to-b from-emerald-400 to-emerald-500 flex items-center justify-end pr-1 rounded-full shadow-lg z-20"
+                                style={{ left: `${getPct(strict.min)}%`, width: `${getWidth(strict.min, strict.max)}%` }}
+                                title={`Super Ideal: ${strict.min}-${strict.max}${unit}`}
+                            >
+                                <span className="text-[5px] font-bold text-white tracking-tight drop-shadow-sm mr-0.5">Sup</span>
+                            </div>
+
+                            {/* Marker (Simple Line) */}
+                            <div
+                                className="absolute top-[-2px] bottom-[-2px] w-0.5 bg-gray-800 z-30 shadow-[0_0_2px_rgba(0,0,0,0.5)]"
+                                style={{ left: `${markerPos}%`, transform: 'translateX(-50%)' }}
+                            >
+                                {/* Value Tag ABOVE marker - Subtle */}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-0.5 text-gray-500 text-[8px] font-bold whitespace-nowrap opacity-80">
+                                    {valNum}{unit}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex justify-between text-[7px] text-gray-400 font-mono mt-0.5 px-0.5 leading-none">
+                            <span>{gaugeMin.toFixed(0)}</span>
+                            <span>{gaugeMax.toFixed(0)}</span>
+                        </div>
+                    </div>
+
+                    {/* Result Box (Right) */}
+                    <div className={`w-16 border rounded px-1 py-0.5 text-[8px] font-bold text-center truncate ${statusBorder} ${statusColor}`}>
+                        {statusText}
+                    </div>
+                </div>
+            );
+        };
+
+        const QualitativeGauge = ({ label, value, options, strictPass, giaPass, warnPass = [] }) => {
+            const val = (value || '').toLowerCase();
+            const parts = val.split(/\s+to\s+/).map(p => p.trim());
+
+            // Find range indices in options
+            let startIdx = -1;
+            let endIdx = -1;
+
+            if (parts.length > 0) {
+                const indices = parts.map(p => options.findIndex(opt => opt.toLowerCase() === p)).filter(idx => idx !== -1);
+                if (indices.length > 0) {
+                    startIdx = Math.min(...indices);
+                    endIdx = Math.max(...indices);
+                }
+            }
+
+            // Determine status - check if the whole range is acceptable
+            const checkPass = (passList) => {
+                if (startIdx === -1) return passList.some(s => s.toLowerCase() === val);
+                // For a range, we check if all segments in the range are in the pass list
+                for (let i = startIdx; i <= endIdx; i++) {
+                    if (!passList.some(s => s.toLowerCase() === options[i].toLowerCase())) return false;
+                }
+                return true;
+            };
+
+            const isStrict = checkPass(strictPass);
+            const isGIA = checkPass(giaPass);
+            const isWarn = checkPass([...strictPass, ...giaPass, ...warnPass]); // Warning if it's at least in warnPass (but not strict/gia)
+
+            let statusColor = 'text-red-600';
+            let statusBorder = 'border-red-200 bg-red-50';
+
+            if (isStrict) {
+                statusColor = 'text-emerald-600';
+                statusBorder = 'border-emerald-200 bg-emerald-50';
+            } else if (isGIA) {
+                statusColor = 'text-gray-600';
+                statusBorder = 'border-gray-200 bg-gray-50';
+            } else if (checkPass([...strictPass, ...giaPass, ...warnPass])) {
+                statusColor = 'text-amber-600';
+                statusBorder = 'border-amber-200 bg-amber-50';
+            }
+
+            const abbreviateValue = (val) => {
+                if (!val) return '-';
+                return val
+                    .replace(/Extremely/gi, 'Ex.')
+                    .replace(/Very/gi, 'V.')
+                    .replace(/Slightly/gi, 'Sl.')
+                    .replace(/Thick/gi, 'Th.')
+                    .replace(/Thin/gi, 'Tn.')
+                    .replace(/Pointed/gi, 'Pt.')
+                    .replace(/Small/gi, 'Sm.')
+                    .replace(/Medium/gi, 'Med.')
+                    .replace(/Faint/gi, 'Fnt.')
+                    .replace(/Strong/gi, 'Str.')
+                    .replace(/Excellent/gi, 'Ex.')
+                    .replace(/Good/gi, 'Gd.')
+                    .replace(/\s+to\s+/gi, '-');
+            };
+
+            let displayValue = value || '-';
+            if (isStrict) {
+                if (val === 'none' && (label === 'Fluorescence' || label === 'Culet')) {
+                    displayValue = 'Excellent (None)';
+                } else {
+                    displayValue = `Excellent (${abbreviateValue(value)})`;
+                }
+            } else {
+                displayValue = abbreviateValue(value);
+            }
+
+            return (
+                <div className="flex items-center gap-2 h-8 mb-1">
+                    <div className="w-16 text-right text-[10px] font-medium text-gray-500 leading-tight">
+                        {label}
+                    </div>
+                    <div className="flex-1 h-2.5 bg-gray-100/80 rounded-full overflow-hidden border border-gray-300/40 shadow-inner backdrop-blur-sm flex">
+                        {options.map((opt, i) => {
+                            const optLower = opt.toLowerCase();
+                            const isActive = (startIdx !== -1 && i >= startIdx && i <= endIdx) || optLower === val;
+                            const optStrict = strictPass.some(s => s.toLowerCase() === optLower);
+                            const optGIA = giaPass.some(s => s.toLowerCase() === optLower);
+                            const optWarn = warnPass.some(s => s.toLowerCase() === optLower);
+
+                            let baseClass = 'bg-transparent hover:bg-white/10';
+                            let activeClass = '';
+                            if (isActive) {
+                                if (optStrict) activeClass = 'bg-gradient-to-b from-emerald-400 to-emerald-500 shadow-sm';
+                                else if (optGIA) activeClass = 'bg-gradient-to-b from-gray-300 to-gray-400 shadow-sm';
+                                else if (optWarn) activeClass = 'bg-gradient-to-b from-amber-400 to-amber-500 shadow-sm';
+                                else activeClass = 'bg-gradient-to-b from-red-400 to-red-500 shadow-sm';
+                            }
+
+                            return (
+                                <div
+                                    key={opt}
+                                    className={`flex-1 h-full ${isActive ? activeClass : baseClass} transition-all duration-300 relative group first:pl-1 last:pr-1 border-r border-gray-300/30 last:border-r-0`}
+                                    title={opt}
+                                >
+                                    {isActive && <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-1 h-1 bg-white/60 rounded-full"></div>}
+                                </div>
+                            )
+                        })}
+                    </div>
+                    <div className={`w-24 border rounded px-1 py-0.5 text-[8px] font-bold text-center truncate ${statusBorder} ${statusColor}`}>
+                        {displayValue}
+                    </div>
+                </div>
+            );
+        };
+
+        const DEFAULT_DIAMONDS = [
+            {
+                id: 'ex-1',
+                reportNumber: '6542119166',
+                carat: '1.03',
+                color: 'E',
+                clarity: 'IF',
+                cut: 'Excellent',
+                polish: 'Excellent',
+                symmetry: 'Excellent',
+                fluorescence: 'None',
+                table: 55.8,
+                depth: 61.5,
+                crownAngle: 34.5,
+                pavilionAngle: 40.8,
+                starLength: 52,
+                lowerHalf: 77,
+                girdle: 'Medium',
+                culet: 'None',
+                date: new Date().toISOString()
+            },
+            {
+                id: 'ex-2',
+                reportNumber: '1234567890',
+                carat: '1.00',
+                color: 'F',
+                clarity: 'VS1',
+                cut: 'Excellent',
+                polish: 'Very Good',
+                symmetry: 'Very Good',
+                fluorescence: 'None',
+                table: 59.5,
+                depth: 62.8,
+                crownAngle: 32.5,
+                pavilionAngle: 41.5,
+                starLength: 48,
+                lowerHalf: 82,
+                girdle: 'Medium',
+                culet: 'None',
+                date: new Date().toISOString()
+            },
+            {
+                id: 'ex-3',
+                reportNumber: '0987654321',
+                carat: '1.50',
+                color: 'G',
+                clarity: 'SI1',
+                cut: 'Very Good',
+                polish: 'Good',
+                symmetry: 'Good',
+                fluorescence: 'Medium',
+                table: 64,
+                depth: 65,
+                crownAngle: 30,
+                pavilionAngle: 42.5,
+                starLength: 40,
+                lowerHalf: 90,
+                girdle: 'Thick',
+                culet: 'Small',
+                date: new Date().toISOString()
+            }
+        ];
+
+        function DiamondAnalyzer() {
+            // State
+            const [diamonds, setDiamonds] = useState(() => {
+                const saved = localStorage.getItem('diamondAnalyzer_diamonds');
+                if (saved) {
+                    try {
+                        const parsed = JSON.parse(saved);
+                        if (parsed && parsed.length > 0) return parsed;
+                    } catch (e) {
+                        console.error("Error parsing saved diamonds", e);
+                    }
+                }
+                return DEFAULT_DIAMONDS;
+            });
+            const [activeTab, setActiveTab] = useState('education'); // Default to education
+            const [showInputForm, setShowInputForm] = useState(false);
+            const [sortColumn, setSortColumn] = useState('date');
+            const [sortDirection, setSortDirection] = useState('asc');
+            const [highlightedDiamondId, setHighlightedDiamondId] = useState(null);
+            const [areDetailsExpanded, setAreDetailsExpanded] = useState(true);
+
+            const toggleExpand = () => {
+                setAreDetailsExpanded(prev => !prev);
+            };
+
+
+            const [inputData, setInputData] = useState({
+                reportNumber: '', date: '', carat: '', color: '', clarity: '', cut: '',
+                depth: '', table: '', crownAngle: '', crownHeight: '', pavilionAngle: '',
+                pavilionDepth: '', starLength: '', lowerHalf: '', girdle: '', culet: '',
+                polish: '', symmetry: '', fluorescence: ''
+            });
+
+            // Effects
+            useEffect(() => {
+                localStorage.setItem('diamondAnalyzer_diamonds', JSON.stringify(diamonds));
+            }, [diamonds]);
+
+            // Handlers
+            const handleAddDiamond = () => {
+                if (!inputData.reportNumber || !inputData.carat) {
+                    alert('Please enter at least Report Number and Carat Weight');
+                    return;
+                }
+                const newDiamond = {
+                    id: Date.now() + Math.random(), // Ensure unique ID
+                    ...inputData,
+                    depth: parseFloat(inputData.depth) || null,
+                    table: parseFloat(inputData.table) || null,
+                    crownAngle: parseFloat(inputData.crownAngle) || null,
+                    pavilionAngle: parseFloat(inputData.pavilionAngle) || null,
+                    starLength: parseFloat(inputData.starLength) || null,
+                    lowerHalf: parseFloat(inputData.lowerHalf) || null,
+                };
+                setDiamonds([...diamonds, newDiamond]);
+                setInputData({
+                    reportNumber: '', date: '', carat: '', color: '', clarity: '', cut: '',
+                    depth: '', table: '', crownAngle: '', crownHeight: '', pavilionAngle: '',
+                    pavilionDepth: '', starLength: '', lowerHalf: '', girdle: '', culet: '',
+                    polish: '', symmetry: '', fluorescence: ''
+                });
+                setShowInputForm(false);
+            };
+
+            const handlePasteGIA = (text) => {
+                // Simplified parser for brevity, assumes same logic as before
+                const patterns = {
+                    reportNumber: /(?:report|certificate|gia)\s*(?:number|#)?\s*:?\s*(\d+)/i,
+                    carat: /(\d+\.?\d*)\s*carat/i,
+                    color: /color\s*(?:grade)?\s*:?\s*([DEFGHIJKLMN])/i,
+                    clarity: /clarity\s*(?:grade)?\s*:?\s*(IF|FL|VVS1|VVS2|VS1|VS2|SI1|SI2|I1|I2|I3)/i,
+                    cut: /cut\s*(?:grade)?\s*:?\s*(Excellent|Very Good|Good|Fair|Poor)/i,
+                    depth: /depth\s*:?\s*(\d+\.?\d*)\s*%/i,
+                    table: /table\s*:?\s*(\d+\.?\d*)\s*%/i,
+                    crownAngle: /crown\s*angle\s*:?\s*(\d+\.?\d*)\s*°/i,
+                    pavilionAngle: /pavilion\s*angle\s*:?\s*(\d+\.?\d*)\s*°/i,
+                    starLength: /star\s*length\s*:?\s*(\d+\.?\d*)\s*%/i,
+                    lowerHalf: /lower\s*half\s*:?\s*(\d+\.?\d*)\s*%/i,
+                    girdle: /girdle\s*:?\s*([^\n\r]+?)(?:\s*(?:,|%|$)|$)/i,
+                    culet: /culet\s*:?\s*(None|Pointed|Small|Medium|Large|Very Large)/i,
+                    polish: /polish\s*:?\s*(Excellent|Very Good|Good|Fair|Poor)/i,
+                    symmetry: /symmetry\s*:?\s*(Excellent|Very Good|Good|Fair|Poor)/i,
+                    fluorescence: /fluorescence\s*:?\s*(None|Faint|Medium|Strong|Very Strong)/i,
+                };
+                const parsed = { ...inputData };
+                Object.keys(patterns).forEach(key => {
+                    const match = text.match(patterns[key]);
+                    if (match) parsed[key] = match[1].trim();
+                });
+                setInputData(parsed);
+            };
+
+            const clearAll = () => {
+                if (window.confirm("Are you sure you want to clear all diamonds?")) {
+                    setDiamonds([]);
+                }
+            };
+
+            const sortedDiamonds = [...diamonds].sort((a, b) => {
+                let valA, valB;
+                if (sortColumn === 'date') return sortDirection === 'asc' ? a.id - b.id : b.id - a.id;
+                // Simple sorting for other columns
+                if (sortColumn === 'carat') { valA = parseFloat(a.carat); valB = parseFloat(b.carat); }
+                else if (sortColumn === 'color') { valA = a.color; valB = b.color; } // Simplified string sort
+                else if (sortColumn === 'status') {
+                    // Sort by status: ideal (3) > good (2) > warning (1) > danger (0)
+                    const rank = { 'ideal': 3, 'good': 2, 'warning': 1, 'danger': 0 };
+                    valA = rank[evaluateDiamond(a).color] || 0;
+                    valB = rank[evaluateDiamond(b).color] || 0;
+                }
+                else { valA = a.id; valB = b.id; }
+
+                if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+                if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            const handleSort = (col) => {
+                if (sortColumn === col) setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+                else { setSortColumn(col); setSortDirection('asc'); }
+            };
+
+            return (
+                <div className="min-h-screen font-sans text-ink pb-20 bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50">
+                    {/* Navigation Bar */}
+                    <nav className="bg-white/80 backdrop-blur-md border-b border-white/50 sticky top-0 z-10 shadow-sm">
+                        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+                            <div className="flex justify-between h-16">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-2xl">💎</span>
+                                    <h1 className="font-serif text-xl font-bold text-ink tracking-tight">
+                                        Ideal Round Diamond Selector
+                                    </h1>
+                                </div>
+                                <div className="flex items-center space-x-4">
+                                    <button
+                                        onClick={() => setActiveTab('education')}
+                                        className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'education' ? 'bg-gold-100 text-gold-700' : 'text-gray-500 hover:text-gray-900'}`}
+                                    >
+                                        Education
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab('compare')}
+                                        className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'compare' ? 'bg-gold-100 text-gold-700' : 'text-gray-500 hover:text-gray-900'}`}
+                                    >
+                                        Compare ({diamonds.length})
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </nav>
+
+                    <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                        {activeTab === 'compare' && (
+                            <div className="space-y-8">
+                                {/* Action Bar */}
+                                <div className="flex justify-between items-center">
+                                    <div className="flex items-baseline gap-4">
+                                        <h2 className="font-serif text-3xl text-ink">Your Selection</h2>
+                                        {diamonds.length > 0 && (
+                                            <button
+                                                onClick={toggleExpand}
+                                                className="text-xs font-bold text-gold-600 hover:text-gold-700 uppercase tracking-wide transition-colors"
+                                            >
+                                                {areDetailsExpanded ? 'Collapse All' : 'Expand All'}
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="flex gap-3">
+                                        {diamonds.length > 0 && (
+                                            <button onClick={clearAll} className="text-sm text-red-500 hover:text-red-700 font-medium px-4 py-2">
+                                                Clear All
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => setShowInputForm(!showInputForm)}
+                                            className="bg-gold-500 hover:bg-gold-600 text-white px-6 py-2 rounded-lg font-medium shadow-sm transition-all"
+                                        >
+                                            {showInputForm ? 'Cancel' : '+ Add Diamond'}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Input Form */}
+                                {showInputForm && (
+                                    <div className="card p-8 rounded-3xl bg-white/80 backdrop-blur-xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/50 animate-fade-in">
+                                        <div className="mb-6">
+                                            <h3 className="font-serif text-xl mb-2">Add New Diamond</h3>
+                                            <p className="text-gray-500 text-sm">Paste the full text from a GIA certificate to auto-fill, or enter details manually.</p>
+                                        </div>
+
+                                        <textarea
+                                            className="w-full border border-gray-300 rounded-lg p-4 mb-6 text-sm font-mono bg-gray-50 focus:ring-2 focus:ring-gold-500 focus:border-transparent outline-none transition-all"
+                                            rows="3"
+                                            placeholder="Paste GIA certificate text here... You can copy/paste the full text from the GIA website, e.g., https://www.gia.edu/report-check?reportno=2527400721&locale=en_US "
+                                            onChange={(e) => handlePasteGIA(e.target.value)}
+                                        />
+
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                                            {/* Core Identity */}
+                                            <div className="col-span-2 md:col-span-4 border-b border-gray-100 pb-4 mb-2">
+                                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Identity</h4>
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Report Number</label>
+                                                        <input type="text" className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.reportNumber} onChange={e => setInputData({ ...inputData, reportNumber: e.target.value })} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Carat</label>
+                                                        <input type="number" step="0.01" className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.carat} onChange={e => setInputData({ ...inputData, carat: e.target.value })} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Color</label>
+                                                        <select className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.color} onChange={e => setInputData({ ...inputData, color: e.target.value })}>
+                                                            <option value="">Select</option>
+                                                            {['D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'].map(o => <option key={o} value={o}>{o}</option>)}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Clarity</label>
+                                                        <select className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.clarity} onChange={e => setInputData({ ...inputData, clarity: e.target.value })}>
+                                                            <option value="">Select</option>
+                                                            {['FL', 'IF', 'VVS1', 'VVS2', 'VS1', 'VS2', 'SI1', 'SI2', 'I1', 'I2', 'I3'].map(o => <option key={o} value={o}>{o}</option>)}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Cut Quality */}
+                                            <div className="col-span-2 border-b md:border-b-0 md:border-r border-gray-100 md:pr-6">
+                                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Cut Quality</h4>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Cut Grade</label>
+                                                        <select className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.cut} onChange={e => setInputData({ ...inputData, cut: e.target.value })}>
+                                                            <option value="">Select</option>
+                                                            {['Excellent', 'Very Good', 'Good', 'Fair', 'Poor'].map(o => <option key={o} value={o}>{o}</option>)}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Polish</label>
+                                                        <select className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.polish} onChange={e => setInputData({ ...inputData, polish: e.target.value })}>
+                                                            <option value="">Select</option>
+                                                            {['Excellent', 'Very Good', 'Good', 'Fair', 'Poor'].map(o => <option key={o} value={o}>{o}</option>)}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Symmetry</label>
+                                                        <select className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.symmetry} onChange={e => setInputData({ ...inputData, symmetry: e.target.value })}>
+                                                            <option value="">Select</option>
+                                                            {['Excellent', 'Very Good', 'Good', 'Fair', 'Poor'].map(o => <option key={o} value={o}>{o}</option>)}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Fluorescence</label>
+                                                        <select className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.fluorescence} onChange={e => setInputData({ ...inputData, fluorescence: e.target.value })}>
+                                                            <option value="">Select</option>
+                                                            {['None', 'Faint', 'Medium', 'Strong', 'Very Strong'].map(o => <option key={o} value={o}>{o}</option>)}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Proportions */}
+                                            <div className="col-span-2">
+                                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Proportions</h4>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Table %</label>
+                                                        <input type="number" step="0.1" className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.table} onChange={e => setInputData({ ...inputData, table: e.target.value })} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Depth %</label>
+                                                        <input type="number" step="0.1" className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.depth} onChange={e => setInputData({ ...inputData, depth: e.target.value })} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Crown Angle</label>
+                                                        <input type="number" step="0.1" className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.crownAngle} onChange={e => setInputData({ ...inputData, crownAngle: e.target.value })} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Pavilion Angle</label>
+                                                        <input type="number" step="0.1" className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.pavilionAngle} onChange={e => setInputData({ ...inputData, pavilionAngle: e.target.value })} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Star Length %</label>
+                                                        <input type="number" step="0.1" className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.starLength} onChange={e => setInputData({ ...inputData, starLength: e.target.value })} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Lower Half %</label>
+                                                        <input type="number" step="0.1" className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.lowerHalf} onChange={e => setInputData({ ...inputData, lowerHalf: e.target.value })} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Culet</label>
+                                                        <select className="w-full border border-gray-300 rounded p-2 text-sm" value={inputData.culet} onChange={e => setInputData({ ...inputData, culet: e.target.value })}>
+                                                            <option value="">Select</option>
+                                                            {['None', 'Pointed', 'Very Small', 'Small', 'Medium', 'Large', 'Very Large'].map(o => <option key={o} value={o}>{o}</option>)}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-500 mb-1">Girdle</label>
+                                                        <input type="text" className="w-full border border-gray-300 rounded p-2 text-sm" placeholder="e.g. Medium" value={inputData.girdle} onChange={e => setInputData({ ...inputData, girdle: e.target.value })} />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <button onClick={handleAddDiamond} className="w-full mt-6 bg-gold-500 text-white font-bold py-3 rounded-lg hover:bg-gold-600 transition-colors">
+                                            Add Diamond to Comparison
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Empty State */}
+                                {diamonds.length === 0 && !showInputForm && (
+                                    <div className="text-center py-20 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                                        <div className="text-6xl mb-4 opacity-20">💎</div>
+                                        <h3 className="font-serif text-xl text-gray-600 mb-2">No diamonds added yet</h3>
+                                        <p className="text-gray-400 mb-6">Add a diamond manually or paste data from a GIA certificate.</p>
+                                        <button onClick={() => setShowInputForm(true)} className="text-gold-600 font-medium hover:text-gold-700">
+                                            Start Adding &rarr;
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Summary Table (Restored) */}
+                                {diamonds.length > 0 && (
+                                    <div className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/50 overflow-hidden mb-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                                        <p className="text-sm text-gray-600 mt-2 mb-4 px-2"> When two diamonds look identical on paper (same carat, color, clarity, and cut), the key difference is often the type of inclusions, not the clarity grade itself. Small, well-placed inclusions are usually fine, but be cautious with clouds, which can cause a hazy appearance. Whenever possible, choose a diamond confirmed to be eye-clean and free from visible haze.</p>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-sm text-left">
+                                                <thead className="bg-gray-50 text-gray-600 font-serif border-b border-gray-200">
+                                                    <tr>
+                                                        <th className="px-4 py-3 font-bold">Report #</th>
+                                                        <th className="px-4 py-3 font-bold cursor-pointer hover:text-gold-600" onClick={() => handleSort('carat')}>Carat {sortColumn === 'carat' && (sortDirection === 'asc' ? '↑' : '↓')}</th>
+                                                        <th className="px-4 py-3 font-bold cursor-pointer hover:text-gold-600" onClick={() => handleSort('color')}>Color {sortColumn === 'color' && (sortDirection === 'asc' ? '↑' : '↓')}</th>
+                                                        <th className="px-4 py-3 font-bold">Clarity</th>
+                                                        <th className="px-4 py-3 font-bold">Cut</th>
+                                                        <th className="px-4 py-3 font-bold cursor-pointer hover:text-gold-600" onClick={() => handleSort('status')}>Status {sortColumn === 'status' && (sortDirection === 'asc' ? '↑' : '↓')}</th>
+                                                        <th className="px-4 py-3 font-bold text-right cursor-pointer hover:text-gold-600" onClick={() => handleSort('date')}>Added {sortColumn === 'date' && (sortDirection === 'asc' ? '↓' : '↑')}</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-gray-100">
+                                                    {sortedDiamonds.map((d) => {
+                                                        const ev = evaluateDiamond(d);
+                                                        const isHighlighted = highlightedDiamondId === d.id;
+                                                        return (
+                                                            <tr
+                                                                key={d.id}
+                                                                className={`transition-colors cursor-pointer ${isHighlighted ? 'bg-gold-50' : 'hover:bg-gray-50'}`}
+                                                                onClick={() => document.getElementById(`diamond-${d.id}`).scrollIntoView({ behavior: 'smooth' })}
+                                                                onMouseEnter={() => setHighlightedDiamondId(d.id)}
+                                                                onMouseLeave={() => setHighlightedDiamondId(null)}
+                                                            >
+                                                                <td className="px-4 py-3 font-mono text-xs text-gray-500">{d.reportNumber}</td>
+                                                                <td className="px-4 py-3 font-bold text-ink">{d.carat}</td>
+                                                                <td className="px-4 py-3">{d.color}</td>
+                                                                <td className="px-4 py-3">{d.clarity}</td>
+                                                                <td className="px-4 py-3">{d.cut}</td>
+                                                                <td className="px-4 py-3">
+                                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${ev.color === 'ideal' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                                                        ev.color === 'good' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                                                            ev.color === 'warning' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                                                                'bg-red-50 text-red-700 border-red-200'
+                                                                        }`}>
+                                                                        {ev.title}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-4 py-3 text-right text-xs text-gray-400 font-mono">
+                                                                    {new Date(d.id).toLocaleString([], { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Comparison Grid */}
+                                {diamonds.length > 0 && (
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-8" style={{ isolation: 'isolate' }}>
+                                        {sortedDiamonds.map((d, i) => {
+                                            const evaluation = evaluateDiamond(d);
+                                            const statusColors = {
+                                                ideal: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                                                good: 'bg-blue-50 text-blue-700 border-blue-200',
+                                                warning: 'bg-amber-50 text-amber-700 border-amber-200',
+                                                danger: 'bg-red-50 text-red-700 border-red-200',
+                                            };
+
+                                            const isHighlighted = highlightedDiamondId === d.id;
+                                            const isExpanded = areDetailsExpanded;
+                                            const issueCount = evaluation.issues.length;
+                                            const warningCount = evaluation.warnings.length;
+
+                                            return (
+                                                <div
+                                                    key={d.id}
+                                                    id={`diamond-${d.id}`}
+                                                    className={`relative card rounded-3xl overflow-hidden flex flex-col transition-all duration-300 bg-white/80 backdrop-blur-xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)] ${isHighlighted ? 'ring-2 ring-gold-500 shadow-xl scale-[1.02] z-20' : 'hover:shadow-lg hover:-translate-y-1 hover:z-20 z-10'}`}
+                                                >
+                                                    {/* Card Header (Clickable to Toggle) */}
+                                                    <div
+                                                        className="p-4 border-b border-gray-100 bg-gray-50/50 cursor-pointer hover:bg-gray-100/50 transition-colors"
+                                                        onClick={toggleExpand}
+                                                    >
+                                                        <div className="flex justify-between items-start mb-2">
+                                                            <div>
+                                                                <h3 className="font-serif text-2xl font-bold text-ink">{d.carat} Carat</h3>
+                                                                <div className="text-xs text-gray-400 font-mono mt-1">Report #: {d.reportNumber}</div>
+                                                            </div>
+                                                            <div className="flex flex-col items-end gap-2">
+                                                                <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide border ${statusColors[evaluation.color]}`}>
+                                                                    {evaluation.title}
+                                                                </div>
+                                                                {/* Issues Summary Badge */}
+                                                                {(issueCount > 0 || warningCount > 0) && (
+                                                                    <div className="flex gap-1">
+                                                                        {issueCount > 0 && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold border border-red-200">⚠️ {issueCount}</span>}
+                                                                        {warningCount > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold border border-amber-200">✋ {warningCount}</span>}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex justify-between items-center mt-2 gap-2">
+                                                            <div className="flex items-center text-xs text-gray-500 gap-2 overflow-hidden min-w-0 flex-shrink">
+                                                                <span className="font-medium text-gray-900">{d.color}</span> Color
+                                                                <span className="text-gray-300">•</span>
+                                                                <span className="font-medium text-gray-900">{d.clarity}</span> Clarity
+                                                                <span className="text-gray-300">•</span>
+                                                                <span className="font-medium text-gray-900">{d.cut}</span> Cut
+                                                            </div>
+                                                            <button
+                                                                className={`text-[10px] font-bold px-2 py-1 rounded-full transition-all flex items-center gap-0.5 flex-shrink-0 whitespace-nowrap ${isExpanded ? 'bg-gray-200 text-gray-700' : 'bg-gold-100 text-gold-700 hover:bg-gold-200'}`}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    toggleExpand();
+                                                                }}
+                                                            >
+                                                                {isExpanded ? 'Hide' : 'Show'}
+                                                                <span className={`transform transition-transform text-[8px] ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
+                                                            </button>
+                                                        </div>
+
+                                                        {/* Benchmark Badges (Always Visible) */}
+                                                        <div className="flex gap-2 mt-3 pt-3 border-t border-gray-200/50">
+                                                            <div className={`text-xs px-2 py-1 rounded border ${evaluation.passesGIA ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-50 border-green-200 text-gray-400'}`}>
+                                                                GIA EX {evaluation.passesGIA ? '✅' : '❌'}
+                                                            </div>
+                                                            <div className={`text-xs px-2 py-1 rounded border ${evaluation.passesAGS ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-50 border-green-200 text-gray-400'}`}>
+                                                                AGS 0 {evaluation.passesAGS ? '✅' : '❌'}
+                                                            </div>
+                                                            <div className={`text-xs px-2 py-1 rounded border ${evaluation.passesStrict ? 'bg-emerald-50 border-emerald-200 text-emerald-700 font-bold' : 'bg-gray-50 border-gray-200 text-gray-400'}`}>
+                                                                Super Ideal {evaluation.passesStrict ? '✅' : '❌'}
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="mt-2 text-xs text-gray-400 font-mono">
+                                                            Added: {new Date(d.id).toLocaleString([], { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Collapsible Body */}
+                                                    {isExpanded && (
+                                                        <div className="animate-fade-in">
+                                                            <div className="p-4 flex-grow bg-white/40">
+                                                                {/* Specs Grid */}
+                                                                {/* Visual Gauges for Proportions */}
+                                                                <div className="mt-0">
+                                                                    <div className="flex items-center justify-center gap-4 mb-4 text-[9px] font-bold uppercase tracking-wide text-gray-500 bg-white/50 py-1.5 rounded-full border border-white/60 shadow-sm">
+                                                                        <div className="flex items-center gap-1">
+                                                                            <span className="w-2 h-2 rounded-full bg-gradient-to-b from-gray-200 to-gray-300 shadow-sm"></span> GIA
+                                                                        </div>
+                                                                        <div className="flex items-center gap-1">
+                                                                            <span className="w-2 h-2 rounded-full bg-gradient-to-b from-blue-400 to-blue-500 shadow-sm"></span> AGS
+                                                                        </div>
+                                                                        <div className="flex items-center gap-1">
+                                                                            <span className="w-2 h-2 rounded-full bg-gradient-to-b from-emerald-400 to-emerald-500 shadow-sm"></span> Super
+                                                                        </div>
+                                                                    </div>
+                                                                    <MultiRangeGauge
+                                                                        label="Table"
+                                                                        value={d.table}
+                                                                        strict={benchmarks.strict.table}
+                                                                        ags={benchmarks.agsl.table}
+                                                                        gia={benchmarks.gia.table}
+                                                                        unit="%"
+                                                                        alignGIARight={true}
+                                                                    />
+                                                                    <MultiRangeGauge
+                                                                        label="Depth"
+                                                                        value={d.depth}
+                                                                        strict={benchmarks.strict.depth}
+                                                                        ags={benchmarks.agsl.depth}
+                                                                        gia={benchmarks.gia.depth}
+                                                                        unit="%"
+                                                                    />
+                                                                    <MultiRangeGauge
+                                                                        label="Crown"
+                                                                        value={d.crownAngle}
+                                                                        strict={benchmarks.strict.crownAngle}
+                                                                        ags={benchmarks.agsl.crownAngle}
+                                                                        gia={benchmarks.gia.crownAngle}
+                                                                        unit="°"
+                                                                    />
+                                                                    <MultiRangeGauge
+                                                                        label="Pavilion"
+                                                                        value={d.pavilionAngle}
+                                                                        strict={benchmarks.strict.pavilionAngle}
+                                                                        ags={benchmarks.agsl.pavilionAngle}
+                                                                        gia={benchmarks.gia.pavilionAngle}
+                                                                        unit="°"
+                                                                    />
+                                                                    <MultiRangeGauge
+                                                                        label="Star"
+                                                                        value={d.starLength}
+                                                                        strict={benchmarks.strict.starLength}
+                                                                        ags={benchmarks.agsl.starLength}
+                                                                        gia={benchmarks.gia.starLength}
+                                                                        unit="%"
+                                                                    />
+                                                                    <MultiRangeGauge
+                                                                        label="Lower"
+                                                                        value={d.lowerHalf}
+                                                                        strict={benchmarks.strict.lowerHalf}
+                                                                        ags={benchmarks.agsl.lowerHalf}
+                                                                        gia={benchmarks.gia.lowerHalf}
+                                                                        unit="%"
+                                                                    />
+                                                                </div>
+
+                                                                {/* Qualitative Gauges */}
+                                                                <div className="mt-4 pt-4 border-t border-gray-100">
+                                                                    <QualitativeGauge
+                                                                        label="Cut"
+                                                                        value={d.cut}
+                                                                        options={['Excellent', 'Very Good', 'Good', 'Fair', 'Poor']}
+                                                                        strictPass={['Excellent']}
+                                                                        giaPass={['Excellent']}
+                                                                    />
+                                                                    <QualitativeGauge
+                                                                        label="Polish"
+                                                                        value={d.polish}
+                                                                        options={['Excellent', 'Very Good', 'Good', 'Fair', 'Poor']}
+                                                                        strictPass={['Excellent']}
+                                                                        giaPass={['Excellent', 'Very Good']}
+                                                                    />
+                                                                    <QualitativeGauge
+                                                                        label="Symmetry"
+                                                                        value={d.symmetry}
+                                                                        options={['Excellent', 'Very Good', 'Good', 'Fair', 'Poor']}
+                                                                        strictPass={['Excellent']}
+                                                                        giaPass={['Excellent', 'Very Good']}
+                                                                    />
+                                                                    <QualitativeGauge
+                                                                        label="Fluorescence"
+                                                                        value={d.fluorescence}
+                                                                        options={['None', 'Faint', 'Medium', 'Strong', 'Very Strong']}
+                                                                        strictPass={['None', 'Faint']}
+                                                                        giaPass={['None', 'Faint', 'Medium']}
+                                                                    />
+                                                                    <QualitativeGauge
+                                                                        label="Culet"
+                                                                        value={d.culet}
+                                                                        options={['None', 'Pointed', 'Very Small', 'Small', 'Medium', 'Large', 'Very Large']}
+                                                                        strictPass={['None', 'Pointed', 'Very Small', 'Small']}
+                                                                        giaPass={['None', 'Pointed', 'Very Small', 'Small', 'Medium']}
+                                                                    />
+                                                                    <QualitativeGauge
+                                                                        label="Girdle"
+                                                                        value={d.girdle}
+                                                                        options={['Extremely Thin', 'Very Thin', 'Slightly Thin', 'Thin', 'Medium', 'Slightly Thick', 'Thick', 'Very Thick', 'Extremely Thick']}
+                                                                        strictPass={['Thin', 'Medium', 'Slightly Thick']}
+                                                                        giaPass={['Thin', 'Medium', 'Slightly Thick']}
+                                                                        warnPass={['Very Thin', 'Thick', 'Very Thick']}
+                                                                    />
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Issues & Warnings Footer (Inside Collapsible) */}
+                                                            {(issueCount > 0 || warningCount > 0) && (
+                                                                <div className="bg-gray-50 border-t border-gray-100 p-4 text-xs">
+                                                                    {issueCount > 0 && (
+                                                                        <div className="mb-2">
+                                                                            <div className="font-bold text-red-600 mb-1 flex items-center gap-1">
+                                                                                <span>⚠️</span> Issues
+                                                                            </div>
+                                                                            <ul className="space-y-1 text-gray-600">
+                                                                                {evaluation.issues.map((issue, i) => (
+                                                                                    <li key={i} className="flex items-start gap-1.5">
+                                                                                        <span className="mt-0.5">•</span>
+                                                                                        <span>{issue}</span>
+                                                                                    </li>
+                                                                                ))}
+                                                                            </ul>
+                                                                        </div>
+                                                                    )}
+                                                                    {warningCount > 0 && (
+                                                                        <div>
+                                                                            <div className="font-bold text-amber-600 mb-1 flex items-center gap-1">
+                                                                                <span>✋</span> Warnings
+                                                                            </div>
+                                                                            <ul className="space-y-1 text-gray-600">
+                                                                                {evaluation.warnings.map((warning, i) => (
+                                                                                    <li key={i} className="flex items-start gap-1.5">
+                                                                                        <span className="mt-0.5">•</span>
+                                                                                        <span>{warning}</span>
+                                                                                    </li>
+                                                                                ))}
+                                                                            </ul>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )}
+
+                                                            {/* Footer Actions */}
+                                                            <div className="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        const newDiamonds = diamonds.filter(item => item.id !== d.id);
+                                                                        setDiamonds(newDiamonds);
+                                                                    }}
+                                                                    className="text-gray-400 hover:text-red-500 text-sm font-medium transition-colors"
+                                                                >
+                                                                    Remove
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
+                                {/* Legal Disclaimer */}
+                                <div className="mt-12 pt-8 border-t border-gray-200">
+                                    <p className="text-xs text-gray-400 text-center italic leading-relaxed">
+                                        Disclaimer: The results provided by this tool are for educational purposes only. We are not responsible for any purchasing decisions or outcomes based on these results. Please consult with a professional gemologist before making any major purchase.
+                                    </p>
+                                    <p className="mt-3 text-[11px] text-gray-400 text-center">
+                                        © 2026 J. Karout. All rights reserved. Commercial use requires a license.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'education' && (
+                            <div className="max-w-3xl mx-auto space-y-12">
+                                <div className="text-center">
+                                    <h2 className="font-serif text-4xl text-ink mb-4">Understanding Diamond Quality</h2>
+                                    <p className="text-xl text-gray-500 font-light">Beyond the 4Cs: Why proportions matter.</p>
+                                </div>
+
+                                <section className="mb-12">
+                                    <h3 className="font-serif text-2xl text-ink mb-6">The 4Cs Refresher</h3>
+                                    <div className="grid md:grid-cols-2 gap-6">
+                                        <div className="bg-white/80 backdrop-blur-xl p-6 rounded-3xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                                            <h4 className="font-bold text-gold-600 mb-2">Color</h4>
+                                            <p className="text-sm text-gray-600 mb-2">
+                                                Graded D (Colorless) to Z (Light Yellow).
+                                                <br /><strong>Recommendation:</strong> G-H is often the best value. D-F is premium.
+                                            </p>
+                                            {/* Color Scale Visual - FULL */}
+                                            <div className="mt-3">
+                                                <div className="flex w-full h-8 rounded-lg overflow-hidden border border-gray-200">
+                                                    {['D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'].map((grade, i) => {
+                                                        // Calculate a background color that gets progressively yellower
+                                                        // D is white (255,255,255), Z is yellow (255, 240, 100)
+                                                        const yellowAmt = (i / 22);
+                                                        const r = 255;
+                                                        const g = 255 - (yellowAmt * 15); // Slight green drop
+                                                        const b = 255 - (yellowAmt * 155); // Big blue drop to make yellow
+                                                        return (
+                                                            <div
+                                                                key={grade}
+                                                                className="flex-1 flex items-center justify-center text-[9px] text-gray-500 font-mono border-r border-gray-100 last:border-0"
+                                                                style={{ backgroundColor: `rgb(${r},${g},${b})` }}
+                                                                title={`Color Grade ${grade}`}
+                                                            >
+                                                                {grade}
+                                                            </div>
+                                                        )
+                                                    })}
+                                                </div>
+                                                <div className="flex justify-between text-[10px] text-gray-400 mt-1 font-mono px-1">
+                                                    <span>Colorless</span>
+                                                    <span>Near Colorless</span>
+                                                    <span>Faint</span>
+                                                    <span>Very Light</span>
+                                                    <span>Light</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="bg-white/80 backdrop-blur-xl p-6 rounded-3xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                                            <h4 className="font-bold text-gold-600 mb-2">Clarity</h4>
+                                            <p className="text-sm text-gray-600 mb-2">
+                                                Internal inclusions. FL (Flawless) to I3 (Included).
+                                                <br /><strong>Recommendation:</strong> VS1-SI1 is usually "eye-clean" and great value.
+                                            </p>
+                                            {/* Clarity Scale Visual - FULL */}
+                                            <div className="mt-3">
+                                                <div className="flex w-full h-8 rounded-lg overflow-hidden border border-gray-200">
+                                                    {[
+                                                        { g: 'FL', c: 'bg-emerald-100' }, { g: 'IF', c: 'bg-emerald-100' },
+                                                        { g: 'VVS1', c: 'bg-emerald-50' }, { g: 'VVS2', c: 'bg-emerald-50' },
+                                                        { g: 'VS1', c: 'bg-blue-50' }, { g: 'VS2', c: 'bg-blue-50' },
+                                                        { g: 'SI1', c: 'bg-amber-50' }, { g: 'SI2', c: 'bg-amber-50' },
+                                                        { g: 'I1', c: 'bg-red-50' }, { g: 'I2', c: 'bg-red-100' }, { g: 'I3', c: 'bg-red-200' }
+                                                    ].map((item) => (
+                                                        <div
+                                                            key={item.g}
+                                                            className={`flex-1 flex items-center justify-center text-[9px] font-bold text-gray-600 border-r border-gray-200 last:border-0 ${item.c}`}
+                                                            title={`Clarity Grade ${item.g}`}
+                                                        >
+                                                            {item.g}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <div className="flex justify-between text-[10px] text-gray-400 mt-1 font-mono px-1">
+                                                    <span>Clean</span>
+                                                    <span>Eye-Clean</span>
+                                                    <span>Included</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="bg-white/80 backdrop-blur-xl p-6 rounded-3xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                                            <h4 className="font-bold text-gold-600 mb-2">Cut</h4>
+                                            <p className="text-sm text-gray-600">
+                                                The most important C. Determines sparkle.
+                                                <br /><strong>Recommendation:</strong> Always aim for Excellent (GIA) or Ideal (AGS).
+                                            </p>
+                                        </div>
+                                        <div className="bg-white/80 backdrop-blur-xl p-6 rounded-3xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                                            <h4 className="font-bold text-gold-600 mb-2">Carat</h4>
+                                            <p className="text-sm text-gray-600">
+                                                The weight of the diamond.
+                                                <br /><strong>Tip:</strong> Cut quality affects how large the diamond <em>looks</em> (spread).
+                                            </p>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section>
+                                    <h3 className="font-serif text-2xl text-ink mb-4">The "Sweet Spot" (Proportions)</h3>
+                                    <div className="prose text-gray-600 leading-relaxed mb-6">
+                                        <p>
+                                            Beyond the 4Cs, the physical angles of the diamond determine how light bounces around inside it.
+                                            This tool looks for the <strong>Super Ideal</strong> range—a tighter set of proportions commonly used in the industry to maximize light performance.
+                                        </p>
+                                    </div>
+                                </section>
+
+                                <div className="grid md:grid-cols-2 gap-8 mb-12">
+                                    <div className="bg-white/80 backdrop-blur-xl p-6 rounded-3xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                                        <h4 className="font-bold text-gold-600 mb-2">Table & Depth</h4>
+                                        <p className="text-sm text-gray-600 mb-4">
+                                            <strong>Table:</strong> The flat top facet. Too wide, and you lose fire (rainbows). Too narrow, and it looks small.<br />
+                                            <strong>Depth:</strong> The total height. Too deep hides weight; too shallow leaks light.
+                                        </p>
+                                    </div>
+                                    <div className="bg-white/80 backdrop-blur-xl p-6 rounded-3xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                                        <h4 className="font-bold text-gold-600 mb-2">Crown & Pavilion</h4>
+                                        <p className="text-sm text-gray-600 mb-4">
+                                            <strong>Crown:</strong> Creates fire. Like a prism.<br />
+                                            <strong>Pavilion:</strong> The engine of brilliance. This reflects light back to your eye. Even a 0.2° deviation here matters.
+                                        </p>
+                                        <p className="text-sm text-gray-600 mb-4">
+                                            Crown and pavilion angles interact with each other; ideal light performance depends on their combined relationship, not on either value independently.<br />
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <section className="mb-12">
+                                    <h3 className="font-serif text-2xl text-ink mb-6">The Finer Details: Finish & Fluorescence</h3>
+                                    <div className="grid md:grid-cols-3 gap-6">
+                                        <div className="bg-white/80 backdrop-blur-xl p-6 rounded-3xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+                                            <h4 className="font-bold text-gold-600 mb-2">Polish & Symmetry</h4>
+                                            <p className="text-sm text-gray-600 mb-2">
+                                                <strong>Polish:</strong> Surface smoothness.<br />
+                                                <strong>Symmetry:</strong> Facet alignment.<br />
+                                                Both crucial for maximum sparkle.
+                                            </p>
+                                            <div className="text-xs bg-gray-50 p-2 rounded text-gray-500">
+                                                <strong>Goal:</strong> Excellent for both.
+                                            </div>
+                                        </div>
+                                        <div className="bg-white/80 backdrop-blur-xl p-6 rounded-3xl border border-white/50 shadow-[0_8px_30px_rgb(0,0,0,0.04)] col-span-2">
+                                            <h4 className="font-bold text-gold-600 mb-4 flex items-center gap-2">
+                                                <span>💡</span> Fluorescence Deep Dive
+                                            </h4>
+                                            <div className="grid md:grid-cols-2 gap-8">
+                                                <div>
+                                                    <h5 className="font-bold text-gray-800 text-sm mb-2">The Good (Whitening Effect)</h5>
+                                                    <p className="text-sm text-gray-600 mb-4">
+                                                        For diamonds with lower color grades (I, J, K, L, M), <strong>Medium</strong> or <strong>Strong Blue</strong> fluorescence can actually make the diamond appear <em>whiter</em>. The blue glow cancels out the faint yellow tint. This is a "secret weapon" for value hunters.
+                                                    </p>
+                                                </div>
+                                                <div>
+                                                    <h5 className="font-bold text-gray-800 text-sm mb-2">The Bad (Milky/Hazy)</h5>
+                                                    <p className="text-sm text-gray-600 mb-4">
+                                                        For high color grades (D, E, F, G, H), <strong>Strong</strong> or <strong>Very Strong</strong> fluorescence can sometimes cause a diamond to appear oily, milky, or hazy in direct sunlight. This must be confirmed by visual inspection as it can kill the sparkle.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="mt-4 pt-4 border-t border-gray-100">
+                                                <h5 className="font-bold text-gray-800 text-sm mb-2">Price Impact</h5>
+                                                <p className="text-sm text-gray-600">
+                                                    Diamonds with Strong fluorescence often trade at a <strong>10-15% discount</strong>. If you find one that is NOT hazy (requires visual inspection), it can be a steal.
+                                                </p>
+                                                <div className="mt-3 text-xs bg-blue-50 text-blue-800 p-3 rounded border border-blue-100">
+                                                    <strong>Verdict:</strong> "None" or "Faint" is safest for D-H colors. "Medium" is fine. "Strong" or "Very Strong" fluorescence requires visual confirmation to rule out haze.
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section className="overflow-x-auto">
+                                    <h3 className="font-serif text-2xl text-ink mb-6">Detailed Benchmark Standards</h3>
+                                    <table className="w-full text-sm text-left border-collapse">
+                                        <thead>
+                                            <tr className="bg-gray-100 border-b border-gray-200">
+                                                <th className="p-3 font-serif font-bold text-ink">Parameter</th>
+                                                <th className="p-3 font-serif font-bold text-gray-600">GIA Excellent (Broad)</th>
+                                                <th className="p-3 font-serif font-bold text-gray-600">AGS Ideal (Tighter)</th>
+                                                <th className="p-3 font-serif font-bold text-emerald-700 bg-emerald-50">Super Ideal (Strict)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr className="border-b border-gray-100">
+                                                <td className="p-3 font-medium">Table %</td>
+                                                <td className="p-3 text-gray-500">52 - 62 %</td>
+                                                <td className="p-3 text-gray-500">52 - 57 %</td>
+                                                <td className="p-3 font-bold text-emerald-700 bg-emerald-50/30">54 - 57 %</td>
+                                            </tr>
+                                            <tr className="border-b border-gray-100">
+                                                <td className="p-3 font-medium">Depth %</td>
+                                                <td className="p-3 text-gray-500">58 - 63 %</td>
+                                                <td className="p-3 text-gray-500">59 - 62 %</td>
+                                                <td className="p-3 font-bold text-emerald-700 bg-emerald-50/30">61 - 62 %</td>
+                                            </tr>
+                                            <tr className="border-b border-gray-100">
+                                                <td className="p-3 font-medium">Crown Angle</td>
+                                                <td className="p-3 text-gray-500">31.5 - 36.5 °</td>
+                                                <td className="p-3 text-gray-500">33.0 - 35.5 °</td>
+                                                <td className="p-3 font-bold text-emerald-700 bg-emerald-50/30">34.0 - 35.0 °</td>
+                                            </tr>
+                                            <tr className="border-b border-gray-100">
+                                                <td className="p-3 font-medium">Pavilion Angle</td>
+                                                <td className="p-3 text-gray-500">40.2 - 41.8 °</td>
+                                                <td className="p-3 text-gray-500">40.5 - 41.1 °</td>
+                                                <td className="p-3 font-bold text-emerald-700 bg-emerald-50/30">40.6 - 41.0 °</td>
+                                            </tr>
+                                            <tr className="border-b border-gray-100">
+                                                <td className="p-3 font-medium">Star Length %</td>
+                                                <td className="p-3 text-gray-400 italic">Not specified</td>
+                                                <td className="p-3 text-gray-400 italic">Not specified</td>
+                                                <td className="p-3 font-bold text-emerald-700 bg-emerald-50/30">50 - 55 %</td>
+                                            </tr>
+                                            <tr className="border-b border-gray-100">
+                                                <td className="p-3 font-medium">Lower Half %</td>
+                                                <td className="p-3 text-gray-400 italic">Not specified</td>
+                                                <td className="p-3 text-gray-400 italic">Not specified</td>
+                                                <td className="p-3 font-bold text-emerald-700 bg-emerald-50/30">75 - 80 %</td>
+                                            </tr>
+                                            <tr className="border-b border-gray-100">
+                                                <td className="p-3 font-medium">Cut Grade</td>
+                                                <td className="p-3 text-gray-500">Excellent</td>
+                                                <td className="p-3 text-gray-500">Ideal</td>
+                                                <td className="p-3 font-bold text-emerald-700 bg-emerald-50/30">Excellent</td>
+                                            </tr>
+                                            <tr className="border-b border-gray-100">
+                                                <td className="p-3 font-medium">Polish / Sym</td>
+                                                <td className="p-3 text-gray-500">VG or EX</td>
+                                                <td className="p-3 text-gray-500">Ideal / EX</td>
+                                                <td className="p-3 font-bold text-emerald-700 bg-emerald-50/30">Excellent</td>
+                                            </tr>
+                                            <tr className="border-b border-gray-100">
+                                                <td className="p-3 font-medium">Fluorescence</td>
+                                                <td className="p-3 text-gray-500">Any</td>
+                                                <td className="p-3 text-gray-500">Negligible</td>
+                                                <td className="p-3 font-bold text-emerald-700 bg-emerald-50/30">None / Faint</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                    <p className="text-xs text-gray-400 mt-4 italic">
+                                        * Note: GIA Excellent is a broad range. A diamond can be GIA Excellent but still leak light.
+                                        The "Super Ideal" range is the "sweet spot" within GIA Excellent where light performance is maximized. No proportion set guarantees beauty; visual inspection and light-performance analysis remain essential.
+                                    </p>
+                                </section>
+
+                                {/* Legal Disclaimer */}
+                                <div className="mt-12 pt-8 border-t border-gray-200">
+                                    <p className="text-xs text-gray-400 text-center italic leading-relaxed">
+                                        Disclaimer: The results provided by this tool are for educational purposes only. We are not responsible for any purchasing decisions or outcomes based on these results. Please consult with a professional gemologist before making any major purchase.
+                                    </p>
+                                    <p className="mt-3 text-[11px] text-gray-400 text-center">
+                                        © 2026 J. Karout. All rights reserved. Commercial use requires a license.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<DiamondAnalyzer />);
+    </script>
+</body>
+
+</html>
